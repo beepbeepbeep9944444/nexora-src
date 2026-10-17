@@ -4,7 +4,7 @@
      hardcoded; anything game specific sits in CFG so it can be corrected
      from the menu instead of needing a rebuild.                         ]]
 
-return function(NX)
+local M = function(NX)
 
 local UI = NX.UI
 local Players = game:GetService("Players")
@@ -296,3 +296,7 @@ NX.onRender(stepRender)
 NX.onPhysics(stepPhysics)
 
 end
+
+local ENV = (getfenv and getfenv()) or _G
+ENV.NEXORA_MODULE = M
+return M
