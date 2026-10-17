@@ -1117,4 +1117,6 @@ function NX.start(group, tab)
     UI:Run()
 end
 
+local ENV = (getfenv and getfenv()) or _G
+ENV.NEXORA_CORE = NX
 return NX
