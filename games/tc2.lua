@@ -11,18 +11,18 @@ do
     local c = {
     eb = { slide = 0.25, carry = 0.8, minsp = 30, maxsp = 210, minfall = -1,
            flatten = true, eps = 1.5 },
-    px = { speed = 25, gain = 50, dead = 0.1 },
+    px = { speed = 25, dead = 0.05 },
     tb = { sig = 0.0000065, tol = 2, drop = 7, gain = 150 },
     wall = { speed = 6, grace = 0.2 },
-    ws = { gain = 51, dead = 0.02, hard = false },
+    ws = { dead = 0.05 },
     wc = { speed = 30, push = 8 },
-    hb = { upmin = 8, ceileps = 1, carry = 1.05, time = 0.3 },
+    hb = { upmin = 8, ceileps = 2, impact = 12, bounce = 0.55,
+           carry = 1.15, time = 0.3 },
     lj = { mult = 1.3, min = 18, max = 40, lift = 0, cd = 0.25, hold = 0.35,
            edgevel = 18, edgemax = 1, edgecd = 2 },
     aj = { vel = 18 },
     mj = { vel = 13 },
     jb = { vel = 30 },
-    bhop = { floor = 372, jump = 458 },
     wj = { back = 34, up = 30, cd = 0.35, hold = 0.3, needwall = true },
     }
     for k, v in pairs(c) do CFG[k] = v end
@@ -48,7 +48,9 @@ local parts, cue = NX.parts, NX.cue
 local setHoriz, setY = NX.setHoriz, NX.setY
 local impulse, stepImpulse = NX.impulse, NX.stepImpulse
 
-local function onGround(vel)
+local function onGround(vel, hum)
+    local m = NX.floorGrounded(hum)
+    if m ~= nil then ST.g.on = m return m end
     local e = CFG.eb.eps
     local was = ST.g.on
     local v = math.abs(vel.Y)
@@ -138,15 +140,14 @@ local function stepBhop(hum)
     ST.bhop.on = false
     if not active('bhop') then return end
     if not UI:Held('space') then return end
-    local addr = hum and hum.Address
-    if not addr then return end
-    pcall(function()
-        local mat = memory_read("int", addr + CFG.bhop.floor)
-        if mat and mat > 0 then
-            memory_write("byte", addr + CFG.bhop.jump, 1)
-            ST.bhop.on = true
-        end
-    end)
+    if not hum then return end
+    if not NX.humAddr(hum) then return end
+
+    local mat = NX.humGet(hum, 'FloorMaterial', "int", 384)
+    if mat and mat > 0 then
+        NX.humSet(hum, 'Jump', "byte", 1, 471)
+        ST.bhop.on = true
+    end
 end
 
 local function camLook()
@@ -167,19 +168,22 @@ local function stepHeadBounce(root, vel)
 
     if ST.hb.untilT > os.clock() then
         if ST.hb.dir then
-            root.AssemblyLinearVelocity =
-                Vector3.new(ST.hb.dir.X * ST.hb.sp, vel.Y, ST.hb.dir.Z * ST.hb.sp)
+            setHoriz(root, ST.hb.dir.X * ST.hb.sp, ST.hb.dir.Z * ST.hb.sp)
         end
         ST.hb.prevVy = vel.Y
         return
     end
 
-    if ST.hb.prevVy >= CFG.hb.upmin and math.abs(vel.Y) <= CFG.hb.ceileps then
+    local drop = ST.hb.prevVy - vel.Y
+    if ST.hb.prevVy >= CFG.hb.upmin
+       and drop >= CFG.hb.impact
+       and vel.Y <= CFG.hb.ceileps then
         local h = Vector3.new(vel.X, 0, vel.Z)
         if h.Magnitude > 0.1 then
             ST.hb.dir = h.Unit
             ST.hb.sp = h.Magnitude * CFG.hb.carry
             ST.hb.untilT = os.clock() + CFG.hb.time
+            setY(root, -math.abs(ST.hb.prevVy) * CFG.hb.bounce)
             cue('head bounce')
         end
     end
@@ -271,13 +275,14 @@ local function stepPixelSurf(root)
         ST.px.flying = true
         ST.px.lockY = root.Position.Y
     end
-    local dir = camDir()
-    if not dir then return end
+
+    local dir = camDir() or Vector3.new(0, 0, 0)
     local mv = dir * CFG.px.speed
-    local diff = ST.px.lockY - root.Position.Y
-    local yv = diff * CFG.px.gain
-    if math.abs(diff) < CFG.px.dead then yv = 0 end
-    root.AssemblyLinearVelocity = Vector3.new(mv.X, yv, mv.Z)
+    root.AssemblyLinearVelocity = Vector3.new(mv.X, 0, mv.Z)
+    local p = root.Position
+    if math.abs(p.Y - ST.px.lockY) > CFG.px.dead then
+        pcall(function() root.Position = Vector3.new(p.X, ST.px.lockY, p.Z) end)
+    end
 end
 
 local function stepTextureBug(root, vel, g)
@@ -319,20 +324,15 @@ local function stepWallStuck(root, vel)
     if not ST.ws.stuck then
         ST.ws.stuck = true
         ST.ws.pos = root.Position
-        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-        return
     end
     local p = ST.ws.pos
     if not p then ST.ws.pos = root.Position return end
+
+    root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
     local here = root.Position
     local dx, dy, dz = p.X - here.X, p.Y - here.Y, p.Z - here.Z
-    local drift = math.sqrt(dx * dx + dy * dy + dz * dz)
-    if drift < CFG.ws.dead then
-        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-    else
-        root.AssemblyLinearVelocity =
-            Vector3.new(dx * CFG.ws.gain, dy * CFG.ws.gain, dz * CFG.ws.gain)
-        if CFG.ws.hard then pcall(function() root.Position = p end) end
+    if (dx * dx + dy * dy + dz * dz) > (CFG.ws.dead * CFG.ws.dead) then
+        pcall(function() root.Position = p end)
     end
 end
 
@@ -349,20 +349,9 @@ local function stepStats(root, vel, g)
     elseif (not g) and ST.js.air and ST.js.p0 then
         local h = root.Position.Y - ST.js.p0.Y
         if h > ST.js.peak then ST.js.peak = h end
-    elseif g and ST.js.air and ST.js.p0 then
+    elseif g and ST.js.air then
+
         ST.js.air = false
-        if (now - ST.js.t0) < CFG.stats.minair or ST.js.peak < CFG.stats.minpeak then
-            return
-        end
-        local d = root.Position - ST.js.p0
-        ST.js.last = {
-            take = ST.js.sp0,
-            land = sp,
-            dist = Vector3.new(d.X, 0, d.Z).Magnitude,
-            air = now - ST.js.t0,
-            peak = ST.js.peak,
-            at = now,
-        }
     end
     ST.js.wasG = g
 end
@@ -399,7 +388,7 @@ local function stepRender()
         return
     end
     local vel = root.AssemblyLinearVelocity
-    local g = onGround(vel)
+    local g = onGround(vel, hum)
     stepBhop(hum)
     stepStats(root, vel, g)
     stepJumps(root, vel, g)
@@ -451,6 +440,11 @@ local bhT = main:Toggle("Bunny hop", false)
 F.bhop = { item = bhT.item }
 
 local SKIN_OFF = { name_container = 112 }
+
+NX.onOffsets(function()
+    SKIN_OFF.name_container = NX.off('Instance', 'NameContainer', SKIN_OFF.name_container)
+end)
+
 local STOCK = {
     Flanker = "Bat", Marksman = "Machete", Annihilator = "Broken Sword",
     Trooper = "Crowbar", Brute = "Fists", Arsonist = "Fire Extinguisher",
@@ -576,7 +570,6 @@ skn:Label("reapplies itself on class change")
 skn:Label("golden: knife for agent, wrench")
 skn:Label("for mechanic, pan for the rest")
 skn:Label("game specific, needs ReplicatedStorage")
-
 
 for _, k in ipairs(ORDER) do
     local f = F[k]
