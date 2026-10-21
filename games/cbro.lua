@@ -123,11 +123,59 @@ task.spawn(function()
     end
 end)
 
+CFG.af = { rate = 0.4 }
+
+local AF = { flash = false, deaf = false, held = {} }
+
+local function playerGui()
+    return game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+end
+
+local function afPark()
+    local pg = playerGui()
+    if not pg then return end
+    local blnd = pg:FindFirstChild("Blnd")
+    if not blnd then return end
+    local img = blnd:FindFirstChild("Blind")
+    if not img then return end
+    if pcall(function() img.Parent = workspace.CurrentCamera end) then
+        AF.held[#AF.held + 1] = { img = img, home = blnd }
+    end
+end
+
+local function afRestore()
+    local list = AF.held
+    AF.held = {}
+    for _, h in ipairs(list) do
+        pcall(function() h.img.Parent = h.home end)
+    end
+end
+
+local function afDeafen()
+    local pg = playerGui()
+    local df = pg and pg:FindFirstChild("Deafen")
+    if not df then return end
+    for _, n in ipairs({ "Full", "Duration" }) do
+        local v = df:FindFirstChild(n)
+        if v then pcall(function() v.Value = 0 end) end
+    end
+end
+
+task.spawn(function()
+    while true do
+        if AF.flash then pcall(afPark) end
+        if AF.deaf then pcall(afDeafen) end
+        task.wait(CFG.af.rate)
+    end
+end)
+
 local tab = UI:Tab("skins", "Skins")
 
 local kn = tab:Section("Knives", "left")
-kn:Dropdown("T knife", "None", KNIVES, function(v) applyKnife("T Knife", v) end)
-kn:Dropdown("CT knife", "None", KNIVES, function(v) applyKnife("CT Knife", v) end)
+kn:Dropdown("Knife", "None", KNIVES, function(v)
+    applyKnife("T Knife", v)
+    applyKnife("CT Knife", v)
+end)
 kn:Button("Reset", function()
     applyKnife("T Knife", "None")
     applyKnife("CT Knife", "None")
@@ -142,6 +190,16 @@ end)
 ns:Toggle("No recoil", false, function(v)
     NS.recoil = v
     if v then flatten(RECOIL) else restoreKeys(RECOIL) end
+end)
+
+local ut = cb:Section("Utility", "right")
+ut:Toggle("Anti flash", false, function(v)
+    AF.flash = v
+    if v then afPark() else afRestore() end
+end)
+ut:Toggle("No deafen", false, function(v)
+    AF.deaf = v
+    if v then afDeafen() end
 end)
 
 end
