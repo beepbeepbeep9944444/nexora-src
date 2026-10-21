@@ -7,7 +7,6 @@ NX.tune = {
 
 local UI = NX.UI
 local Players = game:GetService("Players")
-local cue = NX.cue
 local SK = { applied = nil, lastClass = nil, ok = false }
 
 local SKIN_OFF = { name_container = 112 }
@@ -107,12 +106,10 @@ local function applySkin(name)
     if not name or name == "None" then
         SK.applied = nil
         SK.ok = false
-        cue("skin off")
         return
     end
     SK.applied = name
     refreshSkin()
-    cue("skin " .. name)
 end
 
 task.spawn(function()
@@ -122,7 +119,7 @@ task.spawn(function()
     end
 end)
 
-local vis = UI:Tab("visuals", "Skins")
+local vis = UI:Tab("skins", "Skins")
 local sk = vis:Section("Melee", "left")
 sk:Dropdown("Skin", "None", SKINS, function(v) applySkin(v) end)
 sk:Button("Reapply", function()
