@@ -265,7 +265,7 @@ function UI:_Tabs(click)
     for _, gname in ipairs(self._order) do
         local g = self._groups[gname]
         if g then
-            for _, tname in ipairs(g.order) do
+            for _, tname in ipairs(g and g.order or {}) do
                 table.insert(flat, { tab = g.tabs[tname], name = tname })
             end
         end
@@ -669,7 +669,7 @@ end
 function UI:_Binds()
     for _, gname in ipairs(self._order) do
         local g = self._groups[gname]
-        for _, tname in ipairs(g.order) do
+        for _, tname in ipairs(g and g.order or {}) do
             for _, sec in ipairs(g.tabs[tname].sections) do
                 for _, item in ipairs(sec.items) do
                     local b = item.bind
@@ -1295,7 +1295,7 @@ local function collect()
     local out = {}
     for _, gname in ipairs(UI._order) do
         local g = UI._groups[gname]
-        for _, tname in ipairs(g.order) do
+        for _, tname in ipairs(g and g.order or {}) do
             for _, sec in ipairs(g.tabs[tname].sections) do
                 for _, item in ipairs(sec.items) do
                     if item.label and item.kind ~= 'button' then
@@ -1319,7 +1319,7 @@ end
 local function apply(data)
     for _, gname in ipairs(UI._order) do
         local g = UI._groups[gname]
-        for _, tname in ipairs(g.order) do
+        for _, tname in ipairs(g and g.order or {}) do
             for _, sec in ipairs(g.tabs[tname].sections) do
                 for _, item in ipairs(sec.items) do
                     if item.label and item.kind ~= 'button' then
@@ -1530,6 +1530,136 @@ ostyle:Slider("Height", CFG.ind.cue_yoff, 0.01, 0.05, 0.95, "", function(v) CFG.
 ostyle:Colour("Colour", NX.IC.cue, function(c) NX.IC.cue = c end)
 ostyle:Slider("Graph rate", CFG.ind.graph_rate, 0.01, 0.01, 0.3, "s", function(v) CFG.ind.graph_rate = v end)
 
+local RUI = { held = {} }
+
+RUI.cap = 400
+
+local RUI_SKIP = {
+    Drawing = true,
+    CursorContainer = true,
+    FoundationCursorContainer = true,
+    SelectionSphere = true,
+}
+
+local RUI_CLASS = {
+    ScreenGui = true, Frame = true, Folder = true,
+    ImageLabel = true, ImageButton = true,
+    TextButton = true, TextLabel = true, CanvasGroup = true,
+}
+
+local function coreGui()
+    local ok, s = pcall(game.GetService, game, "CoreGui")
+    return ok and s or nil
+end
+
+local function ruiName(x)
+    local ok, v = pcall(function() return x.Name end)
+    return ok and tostring(v) or ""
+end
+
+local function ruiClass(x)
+    local ok, v = pcall(function() return x.ClassName end)
+    return ok and tostring(v) or ""
+end
+
+local function ruiKids(x)
+    local ok, v = pcall(function() return x:GetChildren() end)
+    return (ok and type(v) == "table") and v or {}
+end
+
+local function ruiHeld(node)
+    for _, h in ipairs(RUI.held) do
+        if h.node == node then return true end
+    end
+    return false
+end
+
+local function ruiTake(node, group)
+    if ruiHeld(node) then return false end
+    local home
+    pcall(function() home = node.Parent end)
+    if not home then return false end
+    if not pcall(function() node.Parent = workspace.CurrentCamera end) then
+        return false
+    end
+    RUI.held[#RUI.held + 1] = { node = node, home = home, group = group }
+    if #RUI.held > RUI.cap then table.remove(RUI.held, 1) end
+    return true
+end
+
+local function ruiSweepCore(root, depth)
+    if depth > 4 then return end
+    for _, c in ipairs(ruiKids(root)) do
+        local n = ruiName(c)
+        if not RUI_SKIP[n] and RUI_CLASS[ruiClass(c)] then
+            ruiTake(c, "roblox")
+        else
+            ruiSweepCore(c, depth + 1)
+        end
+    end
+end
+
+local function ruiParkRoblox()
+    local root = coreGui()
+    if root then ruiSweepCore(root, 1) end
+end
+
+local function ruiParkGame()
+    local plr = game:GetService("Players").LocalPlayer
+    local pg = plr and plr:FindFirstChild("PlayerGui")
+    if not pg then return end
+    for _, c in ipairs(ruiKids(pg)) do
+        local n = ruiName(c)
+        if not RUI_SKIP[n] then
+            local k = ruiClass(c)
+            if k == "ScreenGui" or k == "BillboardGui" then
+                ruiTake(c, "game")
+            end
+        end
+    end
+end
+
+local function ruiRestore(group)
+    local keep = {}
+    for i = #RUI.held, 1, -1 do
+        local h = RUI.held[i]
+        if h.group == group then
+            pcall(function() h.node.Parent = h.home end)
+        else
+            keep[#keep + 1] = h
+        end
+    end
+    RUI.held = {}
+    for i = #keep, 1, -1 do RUI.held[#RUI.held + 1] = keep[i] end
+end
+
+task.spawn(function()
+    while true do
+        if RUI.roblox then pcall(ruiParkRoblox) end
+        if RUI.game then pcall(ruiParkGame) end
+        task.wait(1)
+    end
+end)
+
+local function ruiReport(tag)
+    local n = 0
+    for _ in ipairs(RUI.held) do n = n + 1 end
+    print("[nexora] " .. tag .. " holding " .. n)
+    if notify then pcall(notify, tag .. " holding " .. n, "nexora", 3) end
+end
+
+local rui = ind:Section("Roblox UI", "right")
+rui:Toggle("Hide roblox ui", false, function(v)
+    RUI.roblox = v
+    if v then pcall(ruiParkRoblox) else ruiRestore("roblox") end
+    ruiReport("roblox ui")
+end)
+rui:Toggle("Hide game ui", false, function(v)
+    RUI.game = v
+    if v then pcall(ruiParkGame) else ruiRestore("game") end
+    ruiReport("game ui")
+end)
+
 local pgT
 local cfgTab = UI:Tab("config", "Config")
 local cs = cfgTab:Section("Config", "left")
@@ -1629,7 +1759,21 @@ UI.Step = function(self)
 end
 
 function NX.start(group, tab)
-    UI._order = { "combat", "visuals", "movement", "skins", "config" }
+    local prefer = { "combat", "visuals", "movement", "skins", "config" }
+    local ordered, taken = {}, {}
+    for _, g in ipairs(prefer) do
+        if UI._groups[g] and not taken[g] then
+            taken[g] = true
+            ordered[#ordered + 1] = g
+        end
+    end
+    for _, g in ipairs(UI._order) do
+        if UI._groups[g] and not taken[g] then
+            taken[g] = true
+            ordered[#ordered + 1] = g
+        end
+    end
+    UI._order = ordered
 
     if gameLbl then gameLbl.label = tostring(NX.gameName or 'unknown'):lower() end
 
