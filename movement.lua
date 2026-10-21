@@ -146,6 +146,17 @@ local function ebCharge(char, on)
     end
 end
 
+local function ebSet(char, name, v)
+    if type(v) ~= "number" then return end
+    pcall(function() char:SetAttribute(name, v) end)
+end
+
+local function ebNum(char, name, fallback)
+    local ok, v = pcall(function() return char:GetAttribute(name) end)
+    if ok and type(v) == "number" then return v end
+    return fallback
+end
+
 local function ebRelease(char)
     if not ST.eb.sliding then return end
     ST.eb.sliding = false
@@ -158,9 +169,8 @@ local function ebRelease(char)
     ST.eb.oldSpeed, ST.eb.oldAccl = nil, nil
 end
 
-local function stepEdgebug(root, vel, hum, char)
+local function ebAttrMode(root, vel, hum, char)
     if not char then return end
-
     local now = os.clock()
     ST.eb.prevY = vel.Y
 
@@ -174,10 +184,7 @@ local function stepEdgebug(root, vel, hum, char)
         return
     end
 
-    if not active('eb') then
-        ST.eb.fell = 0
-        return
-    end
+    if not active('eb') then ST.eb.fell = 0 return end
 
     if vel.Y < -1 and vel.Y < ST.eb.fell then ST.eb.fell = vel.Y end
     if now < ST.eb.cd then return end
@@ -199,6 +206,10 @@ local function stepEdgebug(root, vel, hum, char)
     ebSet(char, "Accl", CFG.eb.accl)
     ebCharge(char, true)
     cue('edge bug')
+end
+
+local function stepEdgebug(root, vel, hum, char)
+    ebAttrMode(root, vel, hum, char)
 end
 
 local function camDir()
