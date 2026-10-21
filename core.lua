@@ -1531,7 +1531,7 @@ ostyle:Colour("Colour", NX.IC.cue, function(c) NX.IC.cue = c end)
 ostyle:Slider("Graph rate", CFG.ind.graph_rate, 0.01, 0.01, 0.3, "s", function(v) CFG.ind.graph_rate = v end)
 
 local pgT
-local cfgTab = UI:Tab("misc", "Config")
+local cfgTab = UI:Tab("config", "Config")
 local cs = cfgTab:Section("Config", "left")
 local nameBox = cs:Textbox("default", "config name")
 local picked = configList()[1]
@@ -1629,7 +1629,7 @@ UI.Step = function(self)
 end
 
 function NX.start(group, tab)
-    UI._order = { "visuals", "movement", "misc" }
+    UI._order = { "combat", "visuals", "movement", "skins", "config" }
 
     if gameLbl then gameLbl.label = tostring(NX.gameName or 'unknown'):lower() end
 
