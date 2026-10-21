@@ -7,7 +7,9 @@ NX.tune = {
 }
 
 local UI = NX.UI
-local cue = NX.cue
+local CFG = NX.CFG
+
+CFG.ns = { floor = 0.001, rate = 0.5 }
 local RS = game:GetService("ReplicatedStorage")
 
 local SKIN_OFF = { name_container = 112 }
@@ -56,19 +58,72 @@ local function applyKnife(stock, name)
         swapKnife(stock, cur)
         ST[stock] = nil
     end
-    if not name or name == "None" then
-        cue(stock:lower() .. " reset")
-        return
+    if not name or name == "None" then return end
+    if swapKnife(stock, name) then ST[stock] = name end
+end
+
+local SPREAD = { "Stand", "Crouch", "Move", "Jump", "InitialJump",
+                 "Land", "Ladder" }
+local RECOIL = { "Recoil", "Fire", "RecoveryTime" }
+
+local NS = { spread = false, recoil = false, saved = {} }
+
+local function spreadFolders()
+    local out = {}
+    local w = RS:FindFirstChild("Weapons")
+    if not w then return out end
+    for _, gun in ipairs(w:GetChildren()) do
+        local sp = gun:FindFirstChild("Spread")
+        if sp then out[#out + 1] = sp end
     end
-    if swapKnife(stock, name) then
-        ST[stock] = name
-        cue(stock:lower() .. " " .. name:lower())
-    else
-        cue(stock:lower() .. " failed")
+    return out
+end
+
+local function flatten(keys)
+    local floor = CFG.ns.floor
+    if floor < 0.001 then floor = 0.001 end
+    local n = 0
+    for _, sp in ipairs(spreadFolders()) do
+        for _, key in ipairs(keys) do
+            local v = sp:FindFirstChild(key)
+            if v then
+                local cur = v.Value
+                if type(cur) == "number" and cur > floor then
+                    if NS.saved[v] == nil then NS.saved[v] = cur end
+                    if pcall(function() v.Value = floor end) then n = n + 1 end
+                end
+            end
+        end
+    end
+    return n
+end
+
+local function restoreKeys(keys)
+    local want = {}
+    for _, k in ipairs(keys) do want[k] = true end
+    for v, old in pairs(NS.saved) do
+        if want[v.Name] then
+            pcall(function() v.Value = old end)
+            NS.saved[v] = nil
+        end
     end
 end
 
-local tab = UI:Tab("visuals", "Skins")
+local function applySpread()
+    local n = 0
+    if NS.spread then n = n + flatten(SPREAD) end
+    if NS.recoil then n = n + flatten(RECOIL) end
+    return n
+end
+
+task.spawn(function()
+    while true do
+        if NS.spread or NS.recoil then pcall(applySpread) end
+        task.wait(CFG.ns.rate)
+    end
+end)
+
+local tab = UI:Tab("skins", "Skins")
 
 local kn = tab:Section("Knives", "left")
 kn:Dropdown("T knife", "None", KNIVES, function(v) applyKnife("T Knife", v) end)
@@ -76,6 +131,17 @@ kn:Dropdown("CT knife", "None", KNIVES, function(v) applyKnife("CT Knife", v) en
 kn:Button("Reset", function()
     applyKnife("T Knife", "None")
     applyKnife("CT Knife", "None")
+end)
+
+local cb = UI:Tab("combat", "Combat")
+local ns = cb:Section("Weapon", "left")
+ns:Toggle("No spread", false, function(v)
+    NS.spread = v
+    if v then flatten(SPREAD) else restoreKeys(SPREAD) end
+end)
+ns:Toggle("No recoil", false, function(v)
+    NS.recoil = v
+    if v then flatten(RECOIL) else restoreKeys(RECOIL) end
 end)
 
 end
