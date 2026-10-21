@@ -1,6 +1,7 @@
 local M = function(NX)
 
 NX.gameName = "typical colors 2"
+NX.movement = "movement_tc2"
 
 NX.tune = {
 }
