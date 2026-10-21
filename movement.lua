@@ -8,8 +8,8 @@ local CFG, ST = NX.CFG, NX.ST
 
 do
     local c = {
-    eb = { minfall = -5, arrest = -3, dur = 0.7, cd = 0.1, kick = 0.15,
-           speed = 700, push = 6, glide = -1, steer = -0.05,
+    eb = { minfall = -14, arrest = -3, dur = 0.5, cd = 0.15,
+           minspeed = 4, speed = 400, accl = 5, forward = true,
            holdground = true, eps = 1.5 },
     px = { minfall = 6, ratio = 0.3, eps = 0.02, drop = 7,
            hold = 5.0, dead = 0.05 },
@@ -17,7 +17,7 @@ do
            step = 0, carry = 1, cd = 0.7 },
     wall = { speed = 6, ratio = 0.5, grace = 0.25, decay = 0.5 },
     ws = { dead = 0.05 },
-    wc = { up = 16, hop = 7, push = 2, cd = 0.25, hold = 0.08, max = 8 },
+    wc = { up = 16, hop = 7, cd = 0.25, max = 8 },
     hb = { vel = 8 },
     lj = { mult = 1.3, min = 18, max = 40, lift = 0, cd = 0.25, hold = 0.35,
            edgevel = 18, edgemax = 1, edgecd = 2 },
@@ -37,8 +37,8 @@ do
         end
     end
     local s = {
-    eb = { cd = 0, prevY = 0, sliding = false, until_ = 0, kickUntil = 0,
-           oldSpeed = nil, oldAccl = nil },
+    eb = { cd = 0, prevY = 0, fell = 0, sliding = false, until_ = 0,
+           oldSpeed = nil, oldAccl = nil, chg = nil, chgName = nil },
     px = { active = false, startY = 0, py = nil, t = 0, untilT = 0 },
     tb = { active = false, startY = 0, vy = 0, py = nil, t = 0,
            untilT = 0, dx = 0, dz = 0, cd = 0 },
@@ -111,15 +111,39 @@ local function camLook()
     return f.Unit
 end
 
-local function ebAttr(char, name, v)
+local function ebSet(char, name, v)
     if type(v) ~= "number" then return end
     pcall(function() char:SetAttribute(name, v) end)
 end
 
-local function ebGet(char, name)
+local function ebNum(char, name, fallback)
     local ok, v = pcall(function() return char:GetAttribute(name) end)
     if ok and type(v) == "number" then return v end
-    return nil
+    return fallback
+end
+
+local function ebCharge(char, on)
+    if on then
+        if ST.eb.chg or not CFG.eb.forward or not char then return end
+        local donor
+        for _, c in ipairs(char:GetChildren()) do
+            local k = c.ClassName
+            if k == "Accessory" or k == "BodyColors" or k == "Shirt"
+                or k == "Pants" or k == "CharacterMesh" then
+                donor = c
+                break
+            end
+        end
+        if not donor then return end
+        local old = donor.Name
+        pcall(function() donor.Name = "Charging" end)
+        if donor.Name ~= "Charging" then return end
+        ST.eb.chg, ST.eb.chgName = donor, old
+    else
+        local d, old = ST.eb.chg, ST.eb.chgName
+        ST.eb.chg, ST.eb.chgName = nil, nil
+        if d and old then pcall(function() d.Name = old end) end
+    end
 end
 
 local function ebRelease(char)
@@ -127,9 +151,10 @@ local function ebRelease(char)
     ST.eb.sliding = false
     ST.eb.until_ = 0
     if char then
-        ebAttr(char, "Speed", ST.eb.oldSpeed or 250)
-        ebAttr(char, "Accl", ST.eb.oldAccl or 1)
+        ebSet(char, "Speed", ST.eb.oldSpeed or 250)
+        ebSet(char, "Accl", ST.eb.oldAccl or 1)
     end
+    ebCharge(char, false)
     ST.eb.oldSpeed, ST.eb.oldAccl = nil, nil
 end
 
@@ -137,39 +162,43 @@ local function stepEdgebug(root, vel, hum, char)
     if not char then return end
 
     local now = os.clock()
-    local prevY = ST.eb.prevY
     ST.eb.prevY = vel.Y
 
     if ST.eb.sliding then
         if now >= ST.eb.until_ or not active('eb') then
             ebRelease(char)
         else
-            ebAttr(char, "Speed", CFG.eb.speed)
-            if now < ST.eb.kickUntil then
-                ebAttr(char, "Accl", CFG.eb.push)
-            elseif UI:Held('w') or UI:Held('a') or UI:Held('s') or UI:Held('d') then
-                ebAttr(char, "Accl", CFG.eb.steer)
-            else
-                ebAttr(char, "Accl", CFG.eb.glide)
-            end
+            ebSet(char, "Speed", CFG.eb.speed)
+            ebSet(char, "Accl", CFG.eb.accl)
         end
         return
     end
 
-    if not active('eb') then return end
+    if not active('eb') then
+        ST.eb.fell = 0
+        return
+    end
+
+    if vel.Y < -1 and vel.Y < ST.eb.fell then ST.eb.fell = vel.Y end
     if now < ST.eb.cd then return end
 
-    if prevY < CFG.eb.minfall and vel.Y > CFG.eb.arrest then
-        ST.eb.oldSpeed = ebGet(char, "Speed") or 250
-        ST.eb.oldAccl = ebGet(char, "Accl") or 1
-        ST.eb.sliding = true
-        ST.eb.until_ = now + CFG.eb.dur
-        ST.eb.kickUntil = now + CFG.eb.kick
-        ST.eb.cd = ST.eb.until_ + CFG.eb.cd
-        ebAttr(char, "Speed", CFG.eb.speed)
-        ebAttr(char, "Accl", CFG.eb.push)
-        cue('edge bug')
-    end
+    local flat = Vector3.new(vel.X, 0, vel.Z).Magnitude
+    if flat < CFG.eb.minspeed then return end
+    if ST.eb.fell >= CFG.eb.minfall then return end
+    if vel.Y <= CFG.eb.arrest then return end
+
+    ST.eb.fell = 0
+    ST.eb.oldSpeed = ebNum(char, "Speed", 250)
+    ST.eb.oldAccl = ebNum(char, "Accl", 1)
+    ST.eb.sliding = true
+    ST.eb.until_ = now + CFG.eb.dur
+    ST.eb.cd = ST.eb.until_ + CFG.eb.cd
+
+    setY(root, 0)
+    ebSet(char, "Speed", CFG.eb.speed)
+    ebSet(char, "Accl", CFG.eb.accl)
+    ebCharge(char, true)
+    cue('edge bug')
 end
 
 local function camDir()
@@ -244,7 +273,7 @@ end
 
 local function stepBhop(hum)
     ST.bhop.on = false
-    if ST.eb.sliding and CFG.eb.holdground then return end
+    if CFG.eb.holdground and ST.eb.sliding then return end
     if not active('bhop') then return end
     if not UI:Held('space') then return end
     if not hum then return end
@@ -403,13 +432,8 @@ local function stepWallClimb(root, vel)
     if now < ST.wc.cd then return end
     if ST.wc.uses >= CFG.wc.max then return end
 
-    local n = wallNormal()
-    local into = n and Vector3.new(-n.X, 0, -n.Z) or camLook()
-    if not into then return end
-
     local up = (ST.wc.uses == 0) and CFG.wc.up or CFG.wc.hop
     setY(root, up)
-    impulse(root, into.X * CFG.wc.push, into.Z * CFG.wc.push, CFG.wc.hold)
     ST.wc.cd = now + CFG.wc.cd
     ST.wc.uses = ST.wc.uses + 1
     ST.wc.on = true
@@ -488,7 +512,9 @@ local function stepRender()
         ST.tb.active = false
         ST.bhop.on = false
         ST.eb.sliding = false
+        ST.eb.fell = 0
         ST.eb.oldSpeed, ST.eb.oldAccl = nil, nil
+        ST.eb.chg, ST.eb.chgName = nil, nil
         return
     end
     local vel = root.AssemblyLinearVelocity
